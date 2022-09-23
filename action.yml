@@ -1,0 +1,103 @@
+name: 'Auto Approve PR'
+description: 'Create PR and auto approve'
+
+inputs:
+  token:
+    description: 'PAT'
+    required: true
+  repository:
+    description: 'Repository'
+    required: true
+  base-branch:
+    description: 'Base Branch'
+    required: true
+  head-branch:
+    description: 'Head Branch'
+    required: true
+  cmd:
+    description: 'Command'
+    default: 'echo "Hello World"'
+  commit-message:
+    description: 'Commit Message'
+  auto-approve-branch:
+    description: 'Auto Approve Branch'
+    default: 'dev stg'
+  merge-method:
+    description: 'Merge Method: merge, squash, rebase'
+    default: 'squash'
+  actor:
+    description: 'Actor'
+    required: true
+  email:
+    description: 'Email'
+    required: true
+  title:
+    description: 'Title'
+    required: true
+  content:
+    description: 'Content'
+
+outputs:
+  pr-number:
+    description: 'PR Number'
+    value: ${{ steps.cpr.outputs.pr-number }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v3
+      with:
+        repository: ${{ inputs.repository }}
+        ref: ${{ inputs.base-branch }}
+        token: ${{ inputs.token }}
+        fetch-depth: 0
+    - name: Update Content
+      shell: bash
+      run: ${{ inputs.cmd }}
+    - name: Create PR Branch
+      shell: bash
+      run: |
+        COMMIT_MSG="${{ inputs.commit-message }}"
+
+        if [ -z "$COMMIT_MSG" ]; then
+          COMMIT_MSG="Create PR"
+        fi
+
+        git config user.name ${{ inputs.actor }}
+        git config user.email ${{ inputs.email }}
+        git checkout -b ${{ inputs.head-branch }}
+        git add .
+        git commit -m "$COMMIT_MSG"
+        git push -f -u origin ${{ inputs.head-branch }}
+    - name: Create Pull Request
+      id: cpr
+      shell: bash
+      run: |
+        URL="https://api.github.com/repos/${{ inputs.repository }}/pulls"
+
+        BODY="{\"title\":\"${{ inputs.title }}\",\"body\":\"${{ inputs.content }}\",\"head\":\"${{ inputs.head-branch }}\",\"base\":\"${{ inputs.base-branch }}\"}"
+
+        NUM=`curl -s -X POST $URL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${{ inputs.token }}" -d "${BODY}" | jq -r '.number'`
+
+        echo "::set-output name=pr-number::$NUM"
+    - name: Approve Pull Request
+      shell: bash
+      run: |
+        URL="https://api.github.com/repos/${{ inputs.repository }}/pulls/${{ steps.cpr.outputs.pr-number }}/merge"
+
+        NOTFOUND=`curl -sI $URL -H "Authorization: Bearer ${{ inputs.token }}" | grep -e "HTTP/.* 404"`
+
+        if [ ! -z "$NOTFOUND" ]; then
+          BODY="{\"merge_method\":\"${{ inputs.merge-method }}\"}"
+          RESULT=`curl -s -X PUT $URL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${{ inputs.token }}" -d "${BODY}"`
+          RESULT=`echo "$RESULT" | jq -r '.merged, .message'`
+          MERGED=`echo "$RESULT" | sed -n 1p`
+          MESSAGE=`echo "$RESULT" | sed -n 2p`
+
+          if [ "$MERGED" = "true" ]; then
+            echo "PR ${{ steps.cpr.outputs.pr-number }} merged"
+          else
+            echo "PR ${{ steps.cpr.outputs.pr-number }} not merged: $MESSAGE"
+            exit 1
+          fi
+        fi
