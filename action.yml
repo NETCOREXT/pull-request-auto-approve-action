@@ -79,7 +79,7 @@ runs:
 
         NUM=`curl -s -X POST $URL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${{ inputs.token }}" -d "${BODY}" | jq -r '.number'`
 
-        echo "::set-output name=pr-number::$NUM"
+        echo "pr-number=$NUM" >> $GITHUB_OUTPUT
     - name: Approve Pull Request
       shell: bash
       run: |
